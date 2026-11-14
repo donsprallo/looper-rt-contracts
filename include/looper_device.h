@@ -10,8 +10,9 @@
  * implements this. How a device frames an access is a property of the part,
  * so its description is here, as data a component can ship beside its model.
  *
- * A chip also acts on the board by itself: it pulls an interrupt line, or it
- * hands data to a DMA channel. For that the runtime gives the model a
+ * A chip also acts on the board by itself: it pulls an interrupt line, it
+ * hands data to a DMA channel or takes data from one. For that the runtime
+ * gives the model a
  * @ref looper_device_host_t when it binds it -- functions to call, so that
  * the model still knows nothing of the runtime. Which pin a line drives, and
  * which DMA channel a stream fills, the board decides when it wires the chip.
@@ -84,6 +85,20 @@ typedef struct {
 
     /** @brief The simulated time, in microseconds. */
     uint64_t (*now_us)(void *context);
+
+    /**
+     * @brief Take the next element of a stream from the DMA channel wired to it.
+     *
+     * The other way round from `push`: the channel transmits from the
+     * firmware's buffer, and `element` receives `width` bytes, little-endian,
+     * at the simulated time of the call. Half and complete follow as for any
+     * channel, so a chip that pulls on its own clock -- a DAC, a codec --
+     * paces the transfer as the part would.
+     *
+     * @retval true The channel runs and handed over an element.
+     * @retval false Nothing to take: not wired, not started, ended, or another width.
+     */
+    bool (*pull)(void *context, uint8_t stream, uint8_t *element, size_t width);
 } looper_device_host_t;
 
 /**
@@ -136,6 +151,19 @@ typedef struct {
      * line has then.
      */
     void (*attached)(void *chip, const looper_device_host_t *host);
+
+    /**
+     * @brief The DMA channel wired to a stream was requested: move one element now. May be NULL.
+     *
+     * A channel the board paces by a request -- a timer, a pin, a line of this
+     * or another chip, the end of another channel; whatever the project's
+     * contract names -- does not wait for the chip. At each request the
+     * runtime calls this, and the chip answers with one `push` (a receiving
+     * channel) or one `pull` (a transmitting one) on that stream, as a
+     * peripheral answers a DMA request. Which request it is the chip does not
+     * know and need not: the same model serves any microcontroller.
+     */
+    void (*requested)(void *chip, uint8_t stream);
 } looper_device_ops_t;
 
 /**

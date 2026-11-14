@@ -27,12 +27,14 @@ them.
 - `looper_device_ops_t` -- read and write a register (with whatever the chip
   does on a read, such as a status register that clears), the interval
   between samples, taking a sample of the inputs handed in, and `attached`
-  (v0.2.0), called with the host when the runtime binds the model.
+  (v0.2.0), called with the host when the runtime binds the model, and
+  `requested` (v0.3.0), called when the board's request paces a stream.
 - `looper_spi_frame_t`, `looper_i2c_frame_t` -- how a part frames an access,
   as data a component ships beside its model.
 - `looper_device_host_t` -- what the runtime hands a model when it binds it:
   `set_line` for an output line (INT, DRDY, ALERT), `push` for an element of
-  a DMA stream, `now_us` for the simulated time. The model keeps it from
+  a receiving DMA stream, `pull` (v0.3.0) for one of a transmitting stream,
+  `now_us` for the simulated time. The model keeps it from
   `attached` and calls it when the chip acts; the board decides which pin a
   line drives and which DMA channel a stream fills. Lines and streams are
   numbered by the chip from zero (a chip has at most
@@ -56,7 +58,7 @@ them.
 include(FetchContent)
 FetchContent_Declare(looper_rt_contracts
     GIT_REPOSITORY https://github.com/donsprallo/looper-rt-contracts.git
-    GIT_TAG        v0.2.0)
+    GIT_TAG        v0.3.0)
 FetchContent_MakeAvailable(looper_rt_contracts)
 
 target_link_libraries(my_chip PUBLIC looper::device)
@@ -154,6 +156,13 @@ v0.2.0 adds `looper_device_host_t`, the member `attached` at the end of
 for v0.1.0 leaves `attached` unset (`NULL`) and works unchanged. The looper-rt
 of a setup carries one version of these headers in `rt/runtime/contract/include`:
 that is the one a component of a project is built against.
+
+v0.3.0 adds `pull` at the end of `looper_device_host_t`, for a stream the
+chip takes from a transmitting DMA channel, and `requested` at the end of
+`looper_device_ops_t`, called when the board paces a stream's channel by a
+request -- whatever source the project's contract names -- so that the chip
+answers with one `push` or one `pull`. A model without transmit streams or
+requests leaves `requested` unset; `LOOPER_CONTRACT_ABI` stays 1.
 
 ## Checks
 

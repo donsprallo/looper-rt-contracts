@@ -64,12 +64,24 @@ static bool demo_sample(void *chip, const double *inputs, size_t count)
     return true;
 }
 
+/* A request on the transmit stream 1: the chip takes one element, as a DAC would. */
+static void demo_requested(void *chip, uint8_t stream)
+{
+    demo_chip_t *self = chip;
+    uint8_t element[1] = {0u};
+
+    if ((stream == 1u) && self->host->pull(self->host->context, stream, element, sizeof(element))) {
+        self->last_input = (double)element[0];
+    }
+}
+
 static const looper_device_ops_t demo_ops = {
     .register_read = demo_read,
     .register_write = demo_write,
     .interval_us = demo_interval_us,
     .sample = demo_sample,
     .attached = demo_attached,
+    .requested = demo_requested,
 };
 
 /* A host as a test plays it: it keeps the last line level and the last element. */
@@ -88,6 +100,16 @@ static bool host_push(void *context, uint8_t stream, const uint8_t *element, siz
 {
     (void)stream;
     ((demo_host_state_t *)context)->element = (width > 0u) ? element[0] : 0u;
+    return true;
+}
+
+static bool host_pull(void *context, uint8_t stream, uint8_t *element, size_t width)
+{
+    (void)context;
+    if ((stream != 1u) || (width == 0u)) {
+        return false;
+    }
+    element[0] = 42u;
     return true;
 }
 
@@ -152,7 +174,7 @@ int main(void)
     demo_chip_t chip = {{0u}, 0.0, NULL};
     const double inputs[1] = {2.5};
     demo_host_state_t state = {false, 0u};
-    const looper_device_host_t host = {&state, host_set_line, host_push, host_now_us};
+    const looper_device_host_t host = {&state, host_set_line, host_push, host_now_us, host_pull};
     int failures = 0;
 
     demo_ops.attached(&chip, &host);
@@ -166,6 +188,8 @@ int main(void)
     failures += (!state.line && state.element == 25u) ? 0 : 1;
     failures += (demo_spi_frame.header_length == 1u) && (demo_i2c_frame.pointer_length == 1u) ? 0 : 1;
     failures += (LOOPER_DEVICE_INPUT_CAPACITY >= 1u) ? 0 : 1;
+    demo_ops.requested(&chip, 1u);
+    failures += (chip.last_input == 42.0) ? 0 : 1;
     failures += time_model_failures();
     printf("contract_c: %d failed\n", failures);
     return (failures == 0) ? 0 : 1;
