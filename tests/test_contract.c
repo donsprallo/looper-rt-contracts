@@ -75,6 +75,28 @@ static void demo_requested(void *chip, uint8_t stream)
     }
 }
 
+/* A flash whose busy bit a timer clears, and a CS input it follows. */
+static void demo_busy_over(void *chip, uint32_t timer)
+{
+    ((demo_chip_t *)chip)->last_input = (double)timer;
+}
+
+static void demo_input_changed(void *chip, uint8_t input, bool high)
+{
+    ((demo_chip_t *)chip)->last_input = high ? (double)input : -1.0;
+}
+
+static bool demo_flash_transfer(void *chip, const uint8_t *tx, uint8_t *rx, size_t length)
+{
+    (void)chip;
+    if (length >= 2u && tx[0] == 0x05u) {
+        rx[1] = 0x00u;
+    }
+    return true;
+}
+
+static const looper_spi_device_ops_t demo_flash = {demo_flash_transfer};
+
 static const looper_device_ops_t demo_ops = {
     .register_read = demo_read,
     .register_write = demo_write,
@@ -82,6 +104,7 @@ static const looper_device_ops_t demo_ops = {
     .sample = demo_sample,
     .attached = demo_attached,
     .requested = demo_requested,
+    .input_changed = demo_input_changed,
 };
 
 /* A host as a test plays it: it keeps the last line level and the last element. */
@@ -111,6 +134,15 @@ static bool host_pull(void *context, uint8_t stream, uint8_t *element, size_t wi
     }
     element[0] = 42u;
     return true;
+}
+
+/* A host that runs a timer at once: enough to see the chip's callback and its number. */
+static uint32_t host_schedule(void *context, uint64_t after_us, void (*due)(void *chip, uint32_t timer), void *chip)
+{
+    (void)context;
+    (void)after_us;
+    due(chip, 7u);
+    return 7u;
 }
 
 static uint64_t host_now_us(void *context)
@@ -174,7 +206,7 @@ int main(void)
     demo_chip_t chip = {{0u}, 0.0, NULL};
     const double inputs[1] = {2.5};
     demo_host_state_t state = {false, 0u};
-    const looper_device_host_t host = {&state, host_set_line, host_push, host_now_us, host_pull};
+    const looper_device_host_t host = {.context = &state, .set_line = host_set_line, .push = host_push, .now_us = host_now_us, .pull = host_pull, .schedule = host_schedule};
     int failures = 0;
 
     demo_ops.attached(&chip, &host);
@@ -190,6 +222,18 @@ int main(void)
     failures += (LOOPER_DEVICE_INPUT_CAPACITY >= 1u) ? 0 : 1;
     demo_ops.requested(&chip, 1u);
     failures += (chip.last_input == 42.0) ? 0 : 1;
+    (void)host.schedule(host.context, 3000u, demo_busy_over, &chip);
+    failures += (chip.last_input == 7.0) ? 0 : 1;
+    demo_ops.input_changed(&chip, 2u, true);
+    failures += (chip.last_input == 2.0) ? 0 : 1;
+    {
+        const uint8_t status_read[2] = {0x05u, 0x00u};
+        uint8_t answer[2] = {0xFFu, 0xFFu};
+        const looper_device_can_frame_t frame = {.id = 0x123u, .length = 1u, .data = {0x42u}};
+
+        failures += demo_flash.transfer(&chip, status_read, answer, 2u) && answer[1] == 0x00u ? 0 : 1;
+        failures += (frame.length <= LOOPER_DEVICE_CAN_PAYLOAD_CAPACITY) ? 0 : 1;
+    }
     failures += time_model_failures();
     printf("contract_c: %d failed\n", failures);
     return (failures == 0) ? 0 : 1;

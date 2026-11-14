@@ -11,8 +11,11 @@
  * so its description is here, as data a component can ship beside its model.
  *
  * A chip also acts on the board by itself: it pulls an interrupt line, it
- * hands data to a DMA channel or takes data from one. For that the runtime
- * gives the model a
+ * hands data to a DMA channel or takes data from one, it wakes itself up
+ * later, drives an analog output, and shows the window what it holds. A
+ * chip without a register file -- a flash with commands, a GPS at a UART, a
+ * CAN node -- answers its bus through the ops structures at the end of this
+ * header. For that the runtime gives the model a
  * @ref looper_device_host_t when it binds it -- functions to call, so that
  * the model still knows nothing of the runtime. Which pin a line drives, and
  * which DMA channel a stream fills, the board decides when it wires the chip.
@@ -48,6 +51,36 @@ extern "C" {
 
 /** @brief Most DMA streams one chip model may feed. */
 #define LOOPER_DEVICE_STREAM_CAPACITY 4u
+
+/** @brief Most input lines one chip model may have: CS, RESET, LDAC, CONVST. */
+#define LOOPER_DEVICE_INPUT_CAPACITY 8u
+
+/** @brief Most timers one chip model may have planned at once. */
+#define LOOPER_DEVICE_TIMER_CAPACITY 8u
+
+/** @brief Most analog outputs one chip model may have: a DAC's channels. */
+#define LOOPER_DEVICE_ANALOG_CAPACITY 4u
+
+/** @brief Most values one chip model may publish. */
+#define LOOPER_DEVICE_VALUE_CAPACITY 8u
+
+/** @brief Bytes of one CAN frame's payload, classic CAN. */
+#define LOOPER_DEVICE_CAN_PAYLOAD_CAPACITY 8u
+
+/** @brief No timer: what `schedule` answers when it cannot plan one. */
+#define LOOPER_DEVICE_NO_TIMER 0u
+
+/** @brief A CAN frame as a node model sends and receives it. */
+typedef struct {
+    /** @brief The identifier, 11 or 29 bits. */
+    uint32_t id;
+    /** @brief Whether the identifier has 29 bits. */
+    bool extended;
+    /** @brief Bytes of payload, at most LOOPER_DEVICE_CAN_PAYLOAD_CAPACITY. */
+    uint8_t length;
+    /** @brief The payload. */
+    uint8_t data[LOOPER_DEVICE_CAN_PAYLOAD_CAPACITY];
+} looper_device_can_frame_t;
 
 /**
  * @brief What the runtime offers a chip model, handed to it when it is bound.
@@ -99,6 +132,65 @@ typedef struct {
      * @retval false Nothing to take: not wired, not started, ended, or another width.
      */
     bool (*pull)(void *context, uint8_t stream, uint8_t *element, size_t width);
+
+    /**
+     * @brief Call `due` once, `after_us` from now in simulated time. Since v0.4.0.
+     *
+     * For what a chip does on its own clock that is not a sample: a flash
+     * that clears its busy bit 3 ms after a write, a converter that is
+     * ready some time after CONVST, a chip's own watchdog. `due` runs as an
+     * event of the simulation, not inside the firmware's call, and gets the
+     * number this returned. A reset of the firmware forgets every timer.
+     *
+     * @return The timer's number, or LOOPER_DEVICE_NO_TIMER when the chip
+     *         has LOOPER_DEVICE_TIMER_CAPACITY planned already.
+     */
+    uint32_t (*schedule)(void *context, uint64_t after_us, void (*due)(void *chip, uint32_t timer), void *chip);
+
+    /** @brief Forget a planned timer; one that ran or is unknown is ignored. Since v0.4.0. */
+    void (*cancel)(void *context, uint32_t timer);
+
+    /**
+     * @brief Set an analog output of the chip, a DAC's voltage. Since v0.4.0.
+     *
+     * Wired to an analog channel, an ADC of the microcontroller or the
+     * signal graph reads the value from then on.
+     */
+    void (*set_analog)(void *context, uint8_t output, double value);
+
+    /**
+     * @brief Publish a value of the chip under a name, so that the window shows it. Since v0.4.0.
+     *
+     * The first call with a name makes it a value of the chip (at most
+     * LOOPER_DEVICE_VALUE_CAPACITY); every call records it at the simulated
+     * time. `name` and `unit` have to outlive the binding: give literals.
+     */
+    void (*publish)(void *context, const char *name, double value, const char *unit);
+
+    /**
+     * @brief Report what the chip notices about how it is used. Since v0.4.0.
+     *
+     * A write while the chip is busy, a command it does not know, a read of
+     * a register before its conversion ended: the window shows the sentence
+     * among the faults of the run, under the chip's name.
+     */
+    void (*report)(void *context, const char *text);
+
+    /**
+     * @brief Send bytes from the chip to the microcontroller's UART it is wired to. Since v0.4.0.
+     *
+     * They arrive in the wire's timing, one after another.
+     *
+     * @retval false Not wired to a UART, or the port's queue is full.
+     */
+    bool (*uart_send)(void *context, const uint8_t *data, size_t length);
+
+    /**
+     * @brief Send a CAN frame from the chip onto the bus it is wired to. Since v0.4.0.
+     *
+     * @retval false Not wired to a CAN bus, or the bus took no frame.
+     */
+    bool (*can_send)(void *context, const looper_device_can_frame_t *frame);
 } looper_device_host_t;
 
 /**
@@ -164,7 +256,60 @@ typedef struct {
      * know and need not: the same model serves any microcontroller.
      */
     void (*requested)(void *chip, uint8_t stream);
+
+    /**
+     * @brief An input line of the chip changed its level. May be NULL. Since v0.4.0.
+     *
+     * The level is the electrical one, as for `set_line`. The board wires an
+     * output pin of the microcontroller to the input; the chip numbers its
+     * inputs itself, from zero, as its header says.
+     */
+    void (*input_changed)(void *chip, uint8_t input, bool high);
 } looper_device_ops_t;
+
+/**
+ * @brief An SPI device without a register file: it answers a whole transfer. Since v0.4.0.
+ *
+ * A flash with its command set, an SD card, a display controller. `rx` has
+ * `length` bytes and comes zeroed; what the device does not set stays zero.
+ *
+ * @retval true The device answered; false is a device that does not.
+ */
+typedef struct {
+    bool (*transfer)(void *chip, const uint8_t *tx, uint8_t *rx, size_t length);
+} looper_spi_device_ops_t;
+
+/**
+ * @brief An I2C device without a register file: it answers a whole transaction. Since v0.4.0.
+ *
+ * `tx` is what the firmware wrote (may be NULL with `tx_length` 0), `rx`
+ * what it reads (may be NULL with `rx_length` 0).
+ *
+ * @retval true The device acknowledged.
+ */
+typedef struct {
+    bool (*exchange)(void *chip, const uint8_t *tx, size_t tx_length, uint8_t *rx, size_t rx_length);
+} looper_i2c_device_ops_t;
+
+/**
+ * @brief A peer at a UART port: a GPS module, a modem. Since v0.4.0.
+ *
+ * It takes what the firmware wrote here, and answers when it is ready with
+ * the host's `uart_send` -- now, or later from a timer.
+ */
+typedef struct {
+    void (*received)(void *chip, const uint8_t *data, size_t length);
+} looper_uart_peer_ops_t;
+
+/**
+ * @brief A node on a CAN bus. Since v0.4.0.
+ *
+ * It sees every frame the firmware sends, as a node on a bus does, and
+ * answers with the host's `can_send`.
+ */
+typedef struct {
+    void (*received)(void *chip, const looper_device_can_frame_t *frame);
+} looper_can_node_ops_t;
 
 /**
  * @brief How a device frames an SPI transfer.
