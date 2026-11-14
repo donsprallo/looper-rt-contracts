@@ -10,6 +10,12 @@
  * implements this. How a device frames an access is a property of the part,
  * so its description is here, as data a component can ship beside its model.
  *
+ * A chip also acts on the board by itself: it pulls an interrupt line, or it
+ * hands data to a DMA channel. For that the runtime gives the model a
+ * @ref looper_device_host_t when it binds it -- functions to call, so that
+ * the model still knows nothing of the runtime. Which pin a line drives, and
+ * which DMA channel a stream fills, the board decides when it wires the chip.
+ *
  * This header declares no function and no object, and it is a repository of
  * its own, looper-rt-contracts, with a CMake target of its own,
  * `looper::device`. So a component kept in a repository of its own can
@@ -35,6 +41,50 @@ extern "C" {
 
 /** @brief Most inputs one sample of a chip model can take. */
 #define LOOPER_DEVICE_INPUT_CAPACITY 8u
+
+/** @brief Most output lines one chip model may have: interrupt, ready, alert. */
+#define LOOPER_DEVICE_LINE_CAPACITY 8u
+
+/** @brief Most DMA streams one chip model may feed. */
+#define LOOPER_DEVICE_STREAM_CAPACITY 4u
+
+/**
+ * @brief What the runtime offers a chip model, handed to it when it is bound.
+ *
+ * Every function takes `context` first, which the model passes back as it
+ * was given. Lines and streams are numbered by the chip, from zero, as its
+ * own header says (an MCP23008's INT is its line 0); a line or a stream the
+ * board did not wire is accepted and goes nowhere, as a pin that is not
+ * connected.
+ */
+typedef struct {
+    /** @brief Passed back to every function below. */
+    void *context;
+
+    /**
+     * @brief Set an output line of the chip to a level, as its pin would be.
+     *
+     * The level is the electrical one: an active-low INT that asserts goes
+     * low. Wired to a pin of the microcontroller, the pin follows, and an
+     * interrupt on that pin's edge becomes due as on the board.
+     */
+    void (*set_line)(void *context, uint8_t line, bool high);
+
+    /**
+     * @brief Hand one element of a stream to the DMA channel wired to it.
+     *
+     * `width` bytes, little-endian, as wide as the channel's elements. The
+     * element goes into the firmware's buffer at the simulated time of the
+     * call, and half, complete and idle follow as for any channel.
+     *
+     * @retval true The channel runs and took the element.
+     * @retval false Nothing took it: not wired, not started, or another width.
+     */
+    bool (*push)(void *context, uint8_t stream, const uint8_t *element, size_t width);
+
+    /** @brief The simulated time, in microseconds. */
+    uint64_t (*now_us)(void *context);
+} looper_device_host_t;
 
 /**
  * @brief What a chip model implements.
@@ -77,6 +127,15 @@ typedef struct {
      * @retval true The chip reports a new sample, so its ready line goes.
      */
     bool (*sample)(void *chip, const double *inputs, size_t count);
+
+    /**
+     * @brief The chip is bound: keep `host` to act on the board later. May be NULL.
+     *
+     * `host` lives as long as the binding does. The model sets its lines to
+     * their reset levels here, since a pin wired later takes the level the
+     * line has then.
+     */
+    void (*attached)(void *chip, const looper_device_host_t *host);
 } looper_device_ops_t;
 
 /**
