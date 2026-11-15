@@ -58,7 +58,7 @@ them.
 include(FetchContent)
 FetchContent_Declare(looper_rt_contracts
     GIT_REPOSITORY https://github.com/donsprallo/looper-rt-contracts.git
-    GIT_TAG        v0.4.0)
+    GIT_TAG        v0.5.0)
 FetchContent_MakeAvailable(looper_rt_contracts)
 
 target_link_libraries(my_chip PUBLIC looper::device)
@@ -172,6 +172,14 @@ faults), `uart_send` and `can_send`; to the end of `looper_device_ops_t`:
 `looper_spi_device_ops_t`, `looper_i2c_device_ops_t`, `looper_uart_peer_ops_t`
 and `looper_can_node_ops_t` for devices without a register file. A model
 that uses none of them is unchanged; `LOOPER_CONTRACT_ABI` stays 1.
+
+v0.5.0 adds `looper_context.h`: what a port of an RTOS needs of looper --
+contexts with stacks of their own (`looper_rtos_host_t`: `create`,
+`current`, `switch_to`, `destroy`, `critical`, `idle`, `set_port`,
+`in_isr`), and the port's `may_switch`, which looper calls at an
+interruption point where a switch is allowed. A port is written against it
+alone; the runtime defines `looper_rtos_host()` in a build with
+`LOOPER_RTOS`. Nothing else changes; `LOOPER_CONTRACT_ABI` stays 1.
 
 ## Checks
 

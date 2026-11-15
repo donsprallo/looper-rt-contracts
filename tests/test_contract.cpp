@@ -4,6 +4,7 @@
  */
 #include <cstdio>
 
+#include "looper_context.h"
 #include "looper_device.h"
 #include "looper_time_model_types.h"
 

@@ -4,7 +4,7 @@
 #   include(FetchContent)
 #   FetchContent_Declare(looper_rt_contracts
 #       GIT_REPOSITORY https://github.com/donsprallo/looper-rt-contracts.git
-#       GIT_TAG        v0.4.0)
+#       GIT_TAG        v0.5.0)
 #   FetchContent_MakeAvailable(looper_rt_contracts)
 #
 #   target_link_libraries(my_chip PUBLIC looper::device)
@@ -13,7 +13,7 @@
 # version. From 1.0 on the major version is LOOPER_CONTRACT_ABI; a check in
 # tests/ holds the two together.
 cmake_minimum_required(VERSION 3.20)
-project(looper_rt_contracts VERSION 0.4.0 LANGUAGES C)
+project(looper_rt_contracts VERSION 0.5.0 LANGUAGES C)
 
 # Guarded, because the runtime and a component may both bring the contract
 # into one build; the first one defines the target, the second uses it.
