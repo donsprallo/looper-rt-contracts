@@ -155,6 +155,13 @@ typedef struct {
     void (*set_port)(void *context, const looper_rtos_port_t *port);
     /** @brief Whether the running code is an ISR: a switch is then only asked for, at the next point. */
     bool (*in_isr)(void *context);
+    /**
+     * @brief Name a context anew: its name in the run's events from now on.
+     *
+     * For an RTOS that knows a task's name only after its stack was made,
+     * as FreeRTOS does (`traceTASK_CREATE`).
+     */
+    void (*name)(void *context, looper_context_t *named, const char *name);
 } looper_rtos_host_t;
 
 /**

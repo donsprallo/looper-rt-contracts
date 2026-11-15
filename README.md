@@ -176,7 +176,7 @@ that uses none of them is unchanged; `LOOPER_CONTRACT_ABI` stays 1.
 v0.5.0 adds `looper_context.h`: what a port of an RTOS needs of looper --
 contexts with stacks of their own (`looper_rtos_host_t`: `create`,
 `current`, `switch_to`, `destroy`, `critical`, `idle`, `set_port`,
-`in_isr`), and the port's `may_switch`, which looper calls at an
+`in_isr`, `name`), and the port's `may_switch`, which looper calls at an
 interruption point where a switch is allowed. Every `switch_to` says why
 (`looper_switch_reason_t`: yield, block, tick, ISR, race, start), and the
 port's `tasks` lists its tasks (`looper_rtos_task_t`: context, name, state,
