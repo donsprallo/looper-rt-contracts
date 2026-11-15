@@ -206,6 +206,7 @@ static int time_model_failures(void)
 typedef struct {
     int switches;
     int masked;
+    uint32_t last_reason;
     looper_context_t *running;
 } demo_host_count_t;
 
@@ -222,11 +223,12 @@ static looper_context_t *demo_current(void *context)
     return ((demo_host_count_t *)context)->running;
 }
 
-static void demo_switch_to(void *context, looper_context_t *next)
+static void demo_switch_to(void *context, looper_context_t *next, uint32_t reason)
 {
     demo_host_count_t *host = context;
 
     host->switches++;
+    host->last_reason = reason;
     host->running = next;
 }
 
@@ -248,18 +250,39 @@ static void demo_may_switch(void *port, bool forced)
 {
     looper_context_t *now = demo_rtos_host->current(demo_rtos_host->context);
 
-    (void)port, (void)forced;
-    demo_rtos_host->switch_to(demo_rtos_host->context, now == demo_tasks[0] ? demo_tasks[1] : demo_tasks[0]);
+    (void)port;
+    demo_rtos_host->switch_to(
+        demo_rtos_host->context, now == demo_tasks[0] ? demo_tasks[1] : demo_tasks[0],
+        forced ? (uint32_t)LOOPER_SWITCH_RACE : (uint32_t)LOOPER_SWITCH_TICK
+    );
+}
+
+/* Both tasks, the running one first. */
+static size_t demo_list_tasks(void *port, looper_rtos_task_t *into, size_t capacity)
+{
+    size_t count = 0u;
+
+    (void)port;
+    for (size_t index = 0u; index < 2u && count < capacity; index++) {
+        const bool running = demo_rtos_host->current(demo_rtos_host->context) == demo_tasks[index];
+        const looper_rtos_task_t task = {
+            demo_tasks[index], index == 0u ? "first" : "second",
+            running ? (uint32_t)LOOPER_TASK_RUNNING : (uint32_t)LOOPER_TASK_READY, 1u, 128u, 0u,
+        };
+        into[count++] = task;
+    }
+    return count;
 }
 
 static int check_rtos_port(void)
 {
-    demo_host_count_t count = {0, 0, NULL};
+    demo_host_count_t count = {0, 0, 0u, NULL};
     const looper_rtos_host_t host = {
         .context = &count, .create = demo_create, .current = demo_current, .switch_to = demo_switch_to,
         .critical = demo_critical, .in_isr = demo_in_isr,
     };
-    const looper_rtos_port_t port = {.port = NULL, .may_switch = demo_may_switch};
+    const looper_rtos_port_t port = {.port = NULL, .may_switch = demo_may_switch, .tasks = demo_list_tasks};
+    looper_rtos_task_t listed[2];
     int failures = 0;
 
     demo_rtos_host = &host;
@@ -269,6 +292,8 @@ static int check_rtos_port(void)
     port.may_switch(port.port, false);
     port.may_switch(port.port, true);
     failures += (count.switches == 2 && count.running == demo_tasks[0] && count.masked == 0) ? 0 : 1;
+    failures += count.last_reason == (uint32_t)LOOPER_SWITCH_RACE ? 0 : 1;
+    failures += port.tasks(port.port, listed, 2u) == 2u && listed[0].state == (uint32_t)LOOPER_TASK_RUNNING ? 0 : 1;
     failures += host.in_isr(host.context) ? 1 : 0;
     return failures;
 }

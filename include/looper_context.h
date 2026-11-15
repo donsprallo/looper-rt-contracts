@@ -26,6 +26,9 @@
  * - When nothing is ready the port calls `idle`: the pass of the firmware
  *   ends there, looper serves its clients and moves the clock, and `idle`
  *   returns in the next pass.
+ * - Every switch says why it happens (looper_switch_reason_t), and the port
+ *   lists its tasks when looper asks (`tasks`): a run's events show which
+ *   task ran when, and why the next one took over.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -45,6 +48,52 @@ extern "C" {
 /** @brief A context with a stack of its own; looper's, opaque to the port. */
 typedef struct looper_context looper_context_t;
 
+/** @brief Why a switch happens, as the port knows it. */
+typedef enum {
+    /** @brief The task gave way and stays ready: a yield. */
+    LOOPER_SWITCH_YIELD = 1,
+    /** @brief The task waits: a delay, a queue, a semaphore. */
+    LOOPER_SWITCH_BLOCK = 2,
+    /** @brief The tick made another task due. */
+    LOOPER_SWITCH_TICK = 3,
+    /** @brief An ISR made another task due. */
+    LOOPER_SWITCH_ISR = 4,
+    /** @brief The race mode forced the switch (`may_switch` with `forced`). */
+    LOOPER_SWITCH_RACE = 5,
+    /** @brief The scheduler starts: the switch into the first task. */
+    LOOPER_SWITCH_START = 6
+} looper_switch_reason_t;
+
+/** @brief What a task is doing, as the port's scheduler says. */
+typedef enum {
+    /** @brief It runs now. */
+    LOOPER_TASK_RUNNING = 1,
+    /** @brief It could run and waits for its turn. */
+    LOOPER_TASK_READY = 2,
+    /** @brief It waits for time or for an object. */
+    LOOPER_TASK_BLOCKED = 3,
+    /** @brief It is held until another task resumes it. */
+    LOOPER_TASK_SUSPENDED = 4,
+    /** @brief It was deleted and its context is not freed yet. */
+    LOOPER_TASK_DELETED = 5
+} looper_task_state_t;
+
+/** @brief One task, as the port lists it for looper_rtos_port_t::tasks. */
+typedef struct {
+    /** @brief The context it runs in, the one `create` gave the port. */
+    looper_context_t *context;
+    /** @brief Its name; looper copies it. */
+    const char *name;
+    /** @brief A looper_task_state_t. */
+    uint32_t state;
+    /** @brief Its priority now, the RTOS's number. */
+    uint32_t priority;
+    /** @brief The stack the firmware created it with, in words of the target; 0 when unknown. */
+    uint32_t stack_words;
+    /** @brief The address of its entry function, to name it; 0 when unknown. */
+    uintptr_t entry;
+} looper_rtos_task_t;
+
 /** @brief What looper calls in the port, set with looper_rtos_host_t::set_port. */
 typedef struct {
     /** @brief Handed back to every member. */
@@ -59,6 +108,13 @@ typedef struct {
      * shows. Called with interrupts not masked, outside an ISR.
      */
     void (*may_switch)(void *port, bool forced);
+    /**
+     * @brief Every task the scheduler knows, at most `capacity`; how many were written.
+     *
+     * Called between two passes of the firmware, from looper's own context,
+     * never from a task. NULL when the port lists none.
+     */
+    size_t (*tasks)(void *port, looper_rtos_task_t *into, size_t capacity);
 } looper_rtos_port_t;
 
 /** @brief What looper offers a port, from looper_rtos_host(). */
@@ -77,8 +133,12 @@ typedef struct {
     );
     /** @brief The context that runs now. */
     looper_context_t *(*current)(void *context);
-    /** @brief Run `next` from where it last stopped; returns when this context is switched to again. */
-    void (*switch_to)(void *context, looper_context_t *next);
+    /**
+     * @brief Run `next` from where it last stopped; returns when this context is switched to again.
+     *
+     * `reason` is a looper_switch_reason_t: the run's event of the switch carries it.
+     */
+    void (*switch_to)(void *context, looper_context_t *next, uint32_t reason);
     /** @brief Free a context that does not run and never will again; its stack goes back to the host. */
     void (*destroy)(void *context, looper_context_t *gone);
     /**
